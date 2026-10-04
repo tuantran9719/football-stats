@@ -1,0 +1,28 @@
+# Cấu hình cho Render, dùng khi chọn Render thay vì Railway.
+services:
+  - type: web
+    name: football-stats-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      # Các khoá bí mật KHÔNG để ở đây. Khai trong bảng điều khiển của
+      # Render để chúng không nằm trong mã nguồn.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FEEDBACK_SMTP_HOST
+        sync: false
+      - key: FEEDBACK_SMTP_PORT
+        sync: false
+      - key: FEEDBACK_SMTP_USER
+        sync: false
+      - key: FEEDBACK_SMTP_PASS
+        sync: false
+      - key: FEEDBACK_TO
+        sync: false

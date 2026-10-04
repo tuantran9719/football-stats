@@ -1,0 +1,10 @@
+# Ghim phiên bản chính xác đang chạy ở máy.
+#
+# Máy chủ thuê build lại từ đầu mỗi lần deploy; để ">=" thì một bản mới
+# của thư viện nào đó có thể làm hỏng app đúng lúc bạn không ngồi máy.
+# Nâng phiên bản là việc có chủ đích: sửa file này rồi thử lại ở máy.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+httpx==0.28.1
+pydantic==2.13.5
+python-dotenv==1.2.3

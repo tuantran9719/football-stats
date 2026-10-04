@@ -1,0 +1,32 @@
+# Bí mật — TUYỆT ĐỐI không đưa lên. backend/.gitignore cũng chặn, đây là
+# lớp thứ hai ở gốc repo phòng khi ai đó dọn file kia.
+.env
+*.env
+!.env.example
+
+# Phụ thuộc và sản phẩm build
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+dist/
+web-build/
+.expo/
+
+# Dữ liệu tự sinh lúc chạy: cache, hệ số mô hình, góp ý người dùng,
+# thống kê trọng tài. Máy nào chạy thì tự dựng lại.
+data/
+
+# Hệ điều hành và trình soạn thảo
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Khoá ký ứng dụng di động
+*.jks
+*.p8
+*.p12
+*.keystore
+*.mobileprovision
+*.pem
