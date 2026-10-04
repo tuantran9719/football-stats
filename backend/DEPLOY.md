@@ -14,35 +14,53 @@ làm trước mọi thứ khác.
 | `render.yaml` | Cấu hình Render, dùng nếu chọn Render |
 | `.gitignore` | Chặn `.env` và `data/` lọt lên git |
 
-## Bước 1 — Đưa mã nguồn lên GitHub
+## Bước 1 — Mã nguồn đã nằm trên GitHub
 
-Backend hiện **chưa nằm trong git**. Từ thư mục `football-platform`:
+Repo riêng tư: `tuantran9719/football-stats`, nhánh `main`.
 
-```bash
-cd backend
-git init
-git add .
-git commit -m "Backend Football Stats"
-gh repo create football-stats-api --private --source=. --push
+Đây là **monorepo**: backend và frontend nằm chung một repo. Điều này
+đổi cách cấu hình Railway ở bước sau — đọc kỹ phần "Root Directory".
+
+## Bước 2 — Tạo dịch vụ trên Railway
+
+1. https://railway.app → đăng nhập bằng GitHub.
+2. **New Project → Deploy from GitHub repo → `football-stats`.**
+3. **Settings → Root Directory → gõ `backend`.**
+
+   Bước 3 là bước dễ bỏ sót nhất và là chỗ hỏng thường gặp nhất. Railway
+   mặc định build từ gốc repo; ở đó không có `requirements.txt`, chỉ có
+   thư mục `frontend/` chứa `package.json`. Nixpacks sẽ tưởng đây là dự
+   án Node, đi build ứng dụng Expo, rồi báo lỗi không hiểu nổi — hoặc tệ
+   hơn là build "thành công" mà chẳng có máy chủ nào chạy.
+
+   Đặt Root Directory thành `backend` thì Railway mới thấy
+   `requirements.txt`, `.python-version` và `railway.json`.
+
+4. **Settings → Networking → Generate Domain** để lấy tên miền công khai.
+
+## Bước 3 — Gắn ổ đĩa lưu lâu dài (ĐỪNG BỎ QUA)
+
+**Variables → New Volume**, mount vào `/data`. Rồi thêm biến:
+
+```
+DATA_DIR                /data
 ```
 
-`.env` và `data/` đã bị `.gitignore` chặn — khoá API không lọt lên.
+Trước đây phần này ghi là tuỳ chọn. **Giờ thì không.** Thư mục `data/`
+nay chứa hai thứ đắt giá:
 
-## Bước 2 — Tạo dịch vụ
+- `predictor.json` — hệ số mô hình dự đoán của 39 giải.
+- `chat_model.json` — bộ phân loại câu hỏi đã học (khoảng 500 KB).
 
-**Railway** (khuyến nghị — có ổ đĩa lưu lâu dài):
-1. https://railway.app → New Project → Deploy from GitHub repo
-2. Chọn `football-stats-api`
-3. Settings → Networking → Generate Domain
+Không có ổ đĩa thì mỗi lần deploy lại là mất sạch, và máy chủ phải học
+lại từ đầu: tải lịch 4 mùa của từng đội ở từng giải, hàng nghìn lượt gọi
+ESPN dồn vào vài phút. Gần như chắc chắn dính chặn tần suất, và lúc đó
+người dùng thật đang mở app sẽ thấy "Nguồn dữ liệu đang bận".
 
-**Render** (miễn phí nhưng ngủ sau 15 phút không ai dùng):
-1. https://render.com → New → Web Service → kết nối repo
-2. Render tự đọc `render.yaml`
+## Bước 3b — Khai biến môi trường
 
-## Bước 3 — Khai biến môi trường
-
-Trong bảng điều khiển của dịch vụ, thêm đúng 5 biến này (lấy giá trị từ
-`backend/.env` ở máy). **Không** copy file `.env` lên git.
+Trong **Variables**, thêm 5 biến này (lấy giá trị từ `backend/.env` ở
+máy). **Không** đưa file `.env` lên git.
 
 Từ khi mô hình dự đoán tự viết thay hẳn phần AI, **không còn cần
 `ANTHROPIC_API_KEY` hay `GEMINI_API_KEY`**. Đừng đưa chúng lên máy chủ:
@@ -52,22 +70,18 @@ thừa.
 ```
 FEEDBACK_SMTP_HOST      smtp.gmail.com
 FEEDBACK_SMTP_PORT      587
-FEEDBACK_SMTP_USER      tranhuutuan9719@gmail.com
+FEEDBACK_SMTP_USER      (địa chỉ Gmail dùng để gửi)
 FEEDBACK_SMTP_PASS      (mật khẩu ứng dụng 16 ký tự)
-FEEDBACK_TO             tranhuutuan9719@gmail.com
+FEEDBACK_TO             (địa chỉ nhận góp ý)
 ```
 
-Thêm một biến nữa **nếu** có gắn ổ đĩa (Railway → Volumes, mount vào
-`/data`):
+Không khai `FEEDBACK_TO` thì góp ý gửi về chính `FEEDBACK_SMTP_USER`.
+
+Một biến tuỳ chọn nữa:
 
 ```
-DATA_DIR                /data
+DATA_PROVIDER           espn        (mặc định; đặt demo để chạy bằng dữ liệu mẫu)
 ```
-
-Không gắn ổ đĩa thì app vẫn chạy bình thường, chỉ là mỗi lần deploy lại
-sẽ mất: cache AI (không sao, gọi lại), thống kê trọng tài (tự tích luỹ
-lại), và file góp ý — nhưng **mọi góp ý đều đã được gửi qua email** nên
-vẫn còn bản lưu trong hộp thư.
 
 ## Bước 4 — Kiểm tra
 
