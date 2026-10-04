@@ -1,0 +1,45 @@
+# Chạy toàn bộ hệ thống trên VPS: một container Python, một container
+# Caddy. Không có Node ở đây — bản web được build sẵn ở máy rồi đẩy lên
+# (xem deploy/deploy.sh), vì Metro cần 1–1,5 GB RAM lúc đóng gói, dễ
+# làm chết máy chủ 2 GB.
+
+services:
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Ghi đè để chắc chắn trỏ vào ổ đĩa gắn kèm, bất kể .env ghi gì.
+      DATA_DIR: /data
+    volumes:
+      # Hệ số mô hình dự đoán và bộ phân loại câu hỏi nằm ở đây. Mất là
+      # phải học lại bằng hàng nghìn lượt gọi ESPN, nên để hẳn trên đĩa
+      # máy chủ cho dễ sao lưu, không giấu trong volume của Docker.
+      - ./data:/data
+    # KHÔNG mở cổng ra ngoài. Chỉ Caddy gọi được, qua mạng nội bộ của
+    # Docker. Backend không bao giờ lộ thẳng ra internet.
+    expose:
+      - "4000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      DOMAIN: ${DOMAIN:?Thiếu biến DOMAIN - xem deploy/VPS.md}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - ./logs:/var/log/caddy
+
+volumes:
+  caddy_data:
+  caddy_config:

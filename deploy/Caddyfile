@@ -1,0 +1,43 @@
+# Caddy: vừa phục vụ trang web tĩnh, vừa chuyển tiếp /api sang backend.
+#
+# Vì sao dùng Caddy thay nginx: nó TỰ xin và TỰ gia hạn chứng chỉ HTTPS
+# từ Let's Encrypt, không cần certbot cũng không cần cron. Đó là việc
+# phiền nhất khi tự quản máy chủ, và cũng là việc dễ quên nhất — chứng
+# chỉ hết hạn thì app chết im lặng cho tới khi có người báo.
+#
+# Web và API dùng CHUNG một tên miền, nên trình duyệt coi là cùng nguồn:
+# không còn chuyện gọi chéo tên miền, và bản web build ra không nhúng
+# cứng địa chỉ máy chủ nào (EXPO_PUBLIC_API_BASE=same-origin).
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Mọi thứ dưới /api đi thẳng sang container backend. Tên "api" là
+	# tên service trong docker-compose, Docker tự phân giải.
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	# Phần còn lại là trang tĩnh.
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		# Chặn mấy kiểu tấn công cơ bản. Không có gì cao siêu, chỉ là
+		# những dòng không nên thiếu khi đã mở ra internet.
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}

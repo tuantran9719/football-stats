@@ -1,0 +1,9 @@
+# Giữ ngữ cảnh build nhỏ. Thiếu file này thì Docker gửi cả .venv (hàng
+# trăm MB) và data/ sang daemon trước khi build, chậm vô ích — và tệ
+# hơn, .env có thể lọt vào ảnh.
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+*.log

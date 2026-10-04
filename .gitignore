@@ -30,3 +30,7 @@ data/
 *.keystore
 *.mobileprovision
 *.pem
+
+# Bản web build ra để đẩy lên máy chủ, và log của Caddy.
+web/
+logs/
