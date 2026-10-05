@@ -36,6 +36,7 @@ services:
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./web:/srv/web:ro
+      - ./deploy/public:/srv/public:ro
       - caddy_data:/data
       - caddy_config:/config
       - ./logs:/var/log/caddy

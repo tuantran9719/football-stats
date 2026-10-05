@@ -18,6 +18,18 @@
 		reverse_proxy api:4000
 	}
 
+	# Chính sách quyền riêng tư. Google Play BẮT BUỘC phải có một địa
+	# chỉ công khai cho trang này, và nó phải sống độc lập với app —
+	# người duyệt mở bằng trình duyệt thường, không cài app.
+	#
+	# Để riêng ngoài thư mục web vì thư mục đó bị ghi đè mỗi lần build
+	# lại bản Expo; trang này thì không nên biến mất theo.
+	handle /privacy* {
+		root * /srv/public
+		rewrite * /privacy.html
+		file_server
+	}
+
 	# Phần còn lại là trang tĩnh.
 	handle {
 		root * /srv/web
