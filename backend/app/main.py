@@ -173,8 +173,15 @@ def _check_league_or_all(league: str) -> str:
 async def predictor_status():
     """Tình trạng mô hình dự đoán: đã học bao nhiêu trận, điểm Brier hiện
     tại so với mốc đoán theo tỉ lệ nền."""
+    from .predictor import results_store as predictor_results
     from .predictor import store as predictor_store
-    return await predictor_store.summary()
+    return {
+        "leagues": await predictor_store.summary(),
+        # Số trận đang giữ trên đĩa cho từng giải. Kho này là lý do
+        # việc huấn luyện không còn phải tải lại lịch từ nhà cung cấp
+        # mỗi chu kỳ — xem predictor/results_store.py.
+        "stored": await predictor_results.summary(),
+    }
 
 
 @app.get("/api/standings/form", response_model=StandingsFormResponse)

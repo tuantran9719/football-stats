@@ -14,6 +14,7 @@ from .chat import answer as chat_answer
 from .chat import engine as chat_engine
 from .chat import store as chat_store
 from .predictor import describe as predictor_describe
+from .predictor import results_store as predictor_results
 from .predictor import store as predictor_store
 from .predictor import trainer as predictor_trainer
 from .predictor.model import predict as predictor_predict
@@ -21,7 +22,7 @@ from . import rating as rating_module
 from . import referee_store
 from .cache import TTL_LIVE, TTL_LONG, TTL_MEDIUM, TTL_SHORT, cached, cached_dynamic
 from .models import (
-    ChatResponse, StandingsFormResponse,
+    ChatResponse, ProviderRef, StandingsFormResponse, Team,
     AggregatedStats, AiPrediction, BettingInsights, CalendarResponse, HeadToHeadMatchesResponse,
     HeadToHeadResponse,
     LeagueDto, LiveMatch, LiveResponse, Match, MatchDetailResponse, MatchListResponse,
@@ -626,16 +627,50 @@ def _build_insights(
 CALENDAR_DAYS_EACH_SIDE = 9
 
 
-async def gather_results(league: str, seasons: int = 4) -> list[Match]:
+# Khoảng ngày tối đa chịu lấy theo kiểu "quét từng ngày" khi bổ sung.
+# Gián đoạn dài hơn thế thì quét ngày tốn nhiều lượt gọi hơn là tải lại
+# lịch từng đội, nên lùi về cách cũ cho gọn.
+INCREMENTAL_MAX_DAYS = 30
+
+
+def _record(m: Match) -> Optional[dict]:
+    """Rút một trận về đúng những trường phần huấn luyện cần."""
+    if m.status != "finished" or m.score is None:
+        return None
+    return {
+        "id": m.id,
+        "h": m.home.id, "a": m.away.id,
+        "hn": m.home.name, "an": m.away.name,
+        "hg": int(m.score.home), "ag": int(m.score.away),
+        "d": m.kickoffUtc[:10].replace("-", ""),
+        "k": m.kickoffUtc,
+    }
+
+
+def _to_match(r: dict, league: str) -> Match:
+    """Dựng lại đối tượng trận từ bản ghi đã lưu, đủ cho phần huấn luyện."""
+    def team(tid: str, name: str) -> Team:
+        ext = tid.split(":", 1)[1] if ":" in tid else tid
+        return Team(id=tid, name=name,
+                    refs=[ProviderRef(provider=get_provider().prefix, externalId=ext)])
+
+    return Match(
+        id=r["id"], leagueCode=league, season=r["d"][:4],
+        kickoffUtc=r["k"], status="finished",
+        home=team(r["h"], r.get("hn") or r["h"]),
+        away=team(r["a"], r.get("an") or r["a"]),
+        score=Score(home=r["hg"], away=r["ag"]),
+        refs=[ProviderRef(provider=get_provider().prefix,
+                          externalId=r["id"].split(":", 1)[-1])],
+    )
+
+
+async def _bootstrap_results(league: str, seasons: int) -> list[dict]:
     """
-    Gom toàn bộ trận đã đá của một giải, dùng để huấn luyện mô hình.
+    Lần đầu cho một giải: tải lịch 4 mùa của từng đội.
 
-    Đi theo lịch thi đấu của từng ĐỘI chứ không theo từng ngày: một lượt
-    gọi trả về cả mùa của một đội, nên 20 đội là đủ cả giải. Đi theo
-    ngày sẽ mất khoảng 70 lượt cho mỗi mùa.
-
-    Mỗi trận xuất hiện hai lần (một lần ở lịch mỗi đội) nên phải lọc
-    trùng theo mã trận.
+    Tốn khoảng 80 lượt gọi, nhưng CHỈ MỘT LẦN cho mỗi giải trong suốt
+    vòng đời máy chủ. Từ lần sau chỉ bổ sung phần mới.
     """
     teams = await cached(f"teams:{league}", TTL_LONG, lambda: provider.list_teams(league))
     if not teams:
@@ -651,17 +686,92 @@ async def gather_results(league: str, seasons: int = 4) -> list[Match]:
         )
 
     exts = [t.refs[0].externalId for t in teams if t.refs]
-    results = await _bounded([one(e) for e in exts])
+    pages = await _bounded([one(e) for e in exts])
 
-    seen: set[str] = set()
-    out: list[Match] = []
-    for r in results:
-        if isinstance(r, Exception):
+    out: list[dict] = []
+    for page in pages:
+        if isinstance(page, BaseException):
             continue
-        for m in r:
-            if m.id not in seen:
-                seen.add(m.id)
-                out.append(m)
+        for m in page:
+            rec = _record(m)
+            if rec:
+                out.append(rec)
+    return out
+
+
+async def _recent_results(league: str, since: str) -> list[dict]:
+    """
+    Bổ sung: quét từng ngày thi đấu kể từ `since`.
+
+    Một lượt gọi trả về MỌI trận của giải trong ngày đó, nên vài ngày
+    chỉ tốn vài lượt — thay vì hai chục lượt khi đi theo lịch từng đội.
+    """
+    today = datetime.now(timezone.utc).date()
+    start = datetime.strptime(since, "%Y%m%d").date()
+    days = (today - start).days
+    if days < 0:
+        return []
+
+    dates = [(start + timedelta(days=i)).strftime("%Y%m%d") for i in range(days + 1)]
+    pages = await _bounded([_matches_one(league, d) for d in dates])
+
+    out: list[dict] = []
+    for page in pages:
+        if isinstance(page, BaseException):
+            continue
+        for m in page:
+            rec = _record(m)
+            if rec:
+                out.append(rec)
+    return out
+
+
+async def gather_results(league: str, seasons: int = 4) -> list[Match]:
+    """
+    Mọi trận đã đá của một giải, dùng để huấn luyện mô hình.
+
+    Kết quả giữ VĨNH VIỄN trên đĩa (predictor/results_store.py). Trận
+    đã đá xong thì tỉ số không bao giờ đổi, nên tải lại chúng mỗi 6
+    tiếng là lãng phí thuần tuý — và chính là thứ khiến nhà cung cấp
+    chặn tần suất.
+
+    Lần đầu cho mỗi giải vẫn tốn một lượt tải đầy đủ. Từ đó về sau chỉ
+    quét những ngày đã trôi qua kể từ lần cập nhật trước, thường là vài
+    ngày, tức vài lượt gọi.
+    """
+    stored = await predictor_results.load(league)
+    today = datetime.now(timezone.utc).date()
+
+    # Mốc quét là ngày đã kiểm TỚI, không phải ngày trận mới nhất — nếu
+    # không, giải đang nghỉ giữa mùa sẽ bị quét lại những ngày trống đó
+    # ở mọi lượt huấn luyện.
+    #
+    # Lùi lại một ngày phòng trận kết thúc muộn sau lần quét trước.
+    checked = await predictor_results.checked_through(league)
+    since = checked or await predictor_results.last_date(league)
+    if since:
+        start = datetime.strptime(since, "%Y%m%d").date() - timedelta(days=1)
+        since = start.strftime("%Y%m%d")
+
+    if not stored or since is None:
+        fresh = await _bootstrap_results(league, seasons)
+    elif (today - datetime.strptime(since, "%Y%m%d").date()).days > INCREMENTAL_MAX_DAYS:
+        fresh = await _bootstrap_results(league, seasons)
+    else:
+        fresh = await _recent_results(league, since)
+
+    if fresh:
+        await predictor_results.merge(league, fresh)
+        stored = await predictor_results.load(league)
+    await predictor_results.set_checked(league, today.strftime("%Y%m%d"))
+
+    out: list[Match] = []
+    for r in stored.values():
+        try:
+            out.append(_to_match(r, league))
+        except Exception:
+            continue
+    out.sort(key=lambda m: m.kickoffUtc)
     return out
 
 
