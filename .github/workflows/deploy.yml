@@ -34,14 +34,14 @@ jobs:
       # hostname :" — một dòng chẳng nói lên điều gì.
       - name: Kiểm biến bí mật
         env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_KEY_B64: ${{ secrets.DEPLOY_SSH_KEY_B64 }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
           DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
           DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
         run: |
           missing=""
-          for v in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_TARGET \
+          for v in DEPLOY_SSH_KEY_B64 DEPLOY_KNOWN_HOSTS DEPLOY_TARGET \
                    DEPLOY_DIR DEPLOY_HEALTH_URL; do
             eval "val=\$$v"
             [ -z "$val" ] && missing="$missing $v"
@@ -76,12 +76,27 @@ jobs:
 
       - name: Chuẩn bị SSH
         env:
-          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KEY_B64: ${{ secrets.DEPLOY_SSH_KEY_B64 }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+
+          # Khoá được lưu dưới dạng base64 MỘT DÒNG chứ không phải
+          # nguyên văn nhiều dòng. Lý do: dán khoá nhiều dòng vào ô của
+          # GitHub rất dễ mất xuống dòng, và khi đó ssh chỉ báo "error
+          # in libcrypto" — không hề nói rằng khoá bị méo. Một dòng thì
+          # không còn gì để mất.
+          printf '%s' "$SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
+
+          # Kiểm khoá đọc được trước khi dùng, để lỗi hiện ra ở đúng
+          # chỗ sai thay vì thành "Permission denied" ở bước sau.
+          if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null 2>&1; then
+            echo "Khoá riêng không đọc được. Kiểm lại secret DEPLOY_SSH_KEY_B64:"
+            echo "nó phải là kết quả của: base64 < duong-dan-khoa | tr -d '\\n'"
+            exit 1
+          fi
+
           # Ghim khoá máy chủ thay vì chấp nhận bừa: không có dòng này
           # thì một kẻ chen giữa có thể nhận là máy chủ và lấy trọn mã
           # nguồn cùng quyền đăng nhập.
