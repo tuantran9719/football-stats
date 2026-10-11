@@ -116,20 +116,47 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Đồng bộ lên máy chủ
+      - name: Kiểm thư mục đích trước khi đồng bộ
+        # rsync --delete xoá mọi thứ không có trong nguồn. Trỏ nhầm chỗ
+        # một lần là mất dữ liệu thật — đã xảy ra: một ký tự xuống dòng
+        # thừa trong DEPLOY_DIR khiến rsync ghi vào gốc dự án và xoá
+        # sạch .env cùng thư mục data/ chứa hệ số mô hình đã học.
+        #
+        # Nên trước khi xoá bất cứ thứ gì, bắt buộc xác nhận đang đứng
+        # đúng chỗ: thư mục phải tồn tại và phải có docker-compose.yml.
         run: |
-          ssh "$TARGET" "mkdir -p $DIR"
-          # --delete cho thư mục web để file của bản cũ không nằm lại.
-          rsync -az --delete web/ "$TARGET:$DIR/web/"
-          rsync -az --delete \
+          case "$DIR" in
+            /|/root|/home|/etc|/var|/usr|"")
+              echo "DEPLOY_DIR không an toàn: '$DIR'"; exit 1 ;;
+          esac
+          if ! ssh "$TARGET" "test -f '$DIR/docker-compose.yml'"; then
+            echo "Không thấy $DIR/docker-compose.yml trên máy chủ."
+            echo "Dừng lại thay vì đồng bộ kèm --delete vào một thư mục lạ."
+            exit 1
+          fi
+          echo "đích hợp lệ: $DIR"
+
+      - name: Đồng bộ lên máy chủ
+        # Dùng -rlptz chứ KHÔNG dùng -a: -a kéo theo -o -g, tức áp quyền
+        # sở hữu của máy chạy CI lên file trên máy chủ, biến chúng thành
+        # của một người dùng không tồn tại ở đó.
+        run: |
+          RS="rsync -rlptz --no-owner --no-group"
+          $RS --delete web/ "$TARGET:$DIR/web/"
+          $RS --delete \
             --exclude '.venv' --exclude '__pycache__' \
             --exclude 'data' --exclude '.env' \
             backend/ "$TARGET:$DIR/backend/"
-          rsync -az deploy/ "$TARGET:$DIR/deploy/"
-          rsync -az docker-compose.yml "$TARGET:$DIR/"
+          $RS deploy/ "$TARGET:$DIR/deploy/"
+          $RS docker-compose.yml "$TARGET:$DIR/"
 
       - name: Dựng lại container
-        run: ssh "$TARGET" "cd $DIR && docker compose up -d --build"
+        # --force-recreate là bắt buộc, không phải cho chắc: bind mount
+        # được giải quyết lúc container khởi động. Nếu thư mục trên máy
+        # chủ bị thay mới, container cũ vẫn trỏ vào thư mục cũ đã biến
+        # mất — API vẫn chạy nhưng trang web trả 404 và không có lỗi nào
+        # trong log để lần ra.
+        run: ssh "$TARGET" "cd $DIR && docker compose up -d --build --force-recreate"
 
       - name: Kiểm tra máy chủ đã sống lại
         # Không có bước này thì deploy hỏng vẫn báo xanh, và chỉ người
