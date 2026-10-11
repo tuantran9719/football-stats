@@ -28,6 +28,31 @@ jobs:
     timeout-minutes: 20
 
     steps:
+      # Dừng ngay nếu thiếu biến bí mật, thay vì chạy tiếp rồi chết ở
+      # giữa với thông báo khó hiểu. Lần đầu dựng workflow này đã vấp
+      # đúng chỗ đó: thiếu DEPLOY_TARGET nên ssh báo "Could not resolve
+      # hostname :" — một dòng chẳng nói lên điều gì.
+      - name: Kiểm biến bí mật
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_TARGET }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+          DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+        run: |
+          missing=""
+          for v in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_TARGET \
+                   DEPLOY_DIR DEPLOY_HEALTH_URL; do
+            eval "val=\$$v"
+            [ -z "$val" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "Thiếu biến bí mật:$missing"
+            echo "Khai ở Settings → Secrets and variables → Actions → New repository secret"
+            exit 1
+          fi
+          echo "đủ 5 biến"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
