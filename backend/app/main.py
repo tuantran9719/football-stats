@@ -196,6 +196,17 @@ async def standings_form(league: str):
     return await service.get_standings_form(league)
 
 
+@app.get("/api/live/matches", response_model=MatchListResponse)
+async def live_matches():
+    """
+    Mọi trận đang đá của tất cả các giải, kèm đủ thông tin để vẽ.
+
+    Khác /api/live vốn chỉ gửi tỉ số và đồng hồ cho những trận app đã
+    có sẵn trên màn hình.
+    """
+    return await service.get_live_matches()
+
+
 @app.get("/api/chat")
 async def chat_status():
     """Tình trạng bộ phân loại câu hỏi: độ chính xác, đã được dạy thêm

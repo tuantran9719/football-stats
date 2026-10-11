@@ -378,6 +378,15 @@ export function HomeScreen({
   const [query, setQuery] = useState('');
   const [favOnly, setFavOnly] = useState(false);
   const [liveOnly, setLiveOnly] = useState(false);
+  /**
+   * Trận đang đá của MỌI giải, tải riêng.
+   *
+   * Chế độ trực tiếp cố ý không bị bó trong giải đang chọn: người mở
+   * mục này muốn xem có gì đang diễn ra lúc này, ở bất kỳ đâu. Lọc
+   * danh sách của một giải thì gần như luôn ra rỗng, vì phần lớn thời
+   * gian giải đó không đá.
+   */
+  const [liveAll, setLiveAll] = useState<Match[] | null>(null);
   const { favorites, isFavorite } = useFavorites();
   const leagueLogos = useLeagueLogos();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -430,6 +439,31 @@ export function HomeScreen({
   }, []);
 
   useLiveScores(filter, watchList, applyLive);
+
+  // Tải danh sách trực tiếp toàn giải NGAY CẢ KHI chưa bật chế độ đó.
+  //
+  // Lý do: con số trên nút "Đang đá" phải đếm mọi giải. Nếu chỉ đếm
+  // trong giải đang mở thì phần lớn thời gian nó hiện 0 trong khi
+  // ngoài kia đang có trận — và người dùng sẽ không bao giờ nghĩ tới
+  // việc bấm vào.
+  //
+  // Chưa bật thì hỏi thưa hơn, vì lúc đó chỉ cần con số chứ không cần
+  // tỉ số theo thời gian thực.
+  useEffect(() => {
+    let alive = true;
+    const ctrl = new AbortController();
+    const pull = async () => {
+      try {
+        const res = await api.liveMatches(ctrl.signal);
+        if (alive) setLiveAll(res.matches);
+      } catch {
+        if (alive) setLiveAll((prev) => prev ?? []);
+      }
+    };
+    void pull();
+    const timer = setInterval(() => { void pull(); }, liveOnly ? 25000 : 90000);
+    return () => { alive = false; ctrl.abort(); clearInterval(timer); };
+  }, [liveOnly]);
 
   const load = useCallback(async (lg: HomeFilter, day: string, dayIsToday: boolean) => {
     setError(null); setMatches(null);
@@ -495,16 +529,25 @@ export function HomeScreen({
   }, [query, liveOnly, applyFavorites]);
 
   const filteredUpcoming = useMemo(
-    () => (upcoming ? applyAll(upcoming) : upcoming),
-    [upcoming, applyAll],
+    // Chế độ trực tiếp không có mục "sắp diễn ra": đang xem cái đang
+    // xảy ra thì danh sách trận tuần sau chỉ làm loãng màn hình.
+    () => (liveOnly ? [] : upcoming ? applyAll(upcoming) : upcoming),
+    [liveOnly, upcoming, applyAll],
   );
   const filteredMatches = useMemo(
-    () => (matches ? applyAll(matches) : matches),
-    [matches, applyAll],
+    () => {
+      if (liveOnly) return liveAll ? applyAll(liveAll) : null;
+      return matches ? applyAll(matches) : matches;
+    },
+    [liveOnly, liveAll, matches, applyAll],
   );
+  // Đếm trên danh sách toàn giải. Chưa tải xong thì tạm đếm trong giải
+  // đang mở, để nút không nhấp nháy từ số này sang số khác.
   const liveCount = useMemo(
-    () => (matches ? matches.filter((m) => isLiveStatus(m.status)).length : 0),
-    [matches],
+    () => (liveAll
+      ? liveAll.length
+      : matches ? matches.filter((m) => isLiveStatus(m.status)).length : 0),
+    [liveAll, matches],
   );
   const searching = query.trim().length > 0;
   const filtering = searching || favOnly || liveOnly;
@@ -707,7 +750,12 @@ export function HomeScreen({
           </View>
         </View>
 
-        <DateStrip days={days} value={date} today={today} onChange={setDate} t={t} />
+        {/* Chế độ trực tiếp không gắn với ngày nào: nó hiện thứ đang
+            diễn ra ngay lúc này. Để thanh ngày lại chỉ khiến người dùng
+            tưởng mình đang xem một ngày cụ thể. */}
+        {!liveOnly && (
+          <DateStrip days={days} value={date} today={today} onChange={setDate} t={t} />
+        )}
       </View>
 
       <FeedbackSheet visible={feedbackOpen} onClose={() => setFeedbackOpen(false)} />

@@ -313,6 +313,29 @@ async def get_live(league: str) -> LiveResponse:
     )
 
 
+async def get_live_matches() -> MatchListResponse:
+    """
+    Mọi trận ĐANG ĐÁ của tất cả các giải, kèm đủ thông tin để vẽ.
+
+    Khác /api/live: endpoint kia chỉ trả tỉ số và đồng hồ cho những trận
+    app đã hiển thị sẵn, nên không có tên đội lẫn logo. Ở chế độ xem
+    trực tiếp thì người dùng muốn thấy trận của MỌI giải, kể cả giải
+    đang không mở — nên phải trả về đối tượng trận đầy đủ.
+
+    Lọc ở máy chủ chứ không để app tự lọc: gộp cả 39 giải là hàng trăm
+    trận trong ngày, trong khi số trận đang đá thường chỉ vài trận.
+    Gửi hết về rồi bỏ đi 99% là phí băng thông của người dùng di động.
+
+    Dùng chung cache với danh sách trận nên không sinh thêm lượt gọi
+    nào ngoài số đã tính.
+    """
+    matches = await _gather_all_leagues(
+        lambda code: _matches_one(code, None), limit=None,
+    )
+    live = [m for m in matches if m.status in LIVE_STATUSES]
+    return MatchListResponse(league="ALL", matches=live)
+
+
 async def _news_one(league: str) -> list["NewsItem"]:
     return await cached(f"news:{league}", TTL_MEDIUM, lambda: provider.list_news(league))
 

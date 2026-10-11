@@ -214,6 +214,17 @@ export const api = {
   standingsForm: (league: string, signal?: AbortSignal) =>
     call<StandingsFormResponse>('/api/standings/form', { league }, signal),
 
+  /**
+   * Mọi trận đang đá của TẤT CẢ các giải, kèm đủ thông tin để vẽ.
+   *
+   * Khác `live` ở dưới: hàm kia chỉ lấy tỉ số và đồng hồ cho những trận
+   * đã hiện sẵn trên màn hình. Hàm này dùng cho chế độ xem trực tiếp,
+   * nơi người dùng muốn thấy trận của mọi giải chứ không riêng giải
+   * đang chọn.
+   */
+  liveMatches: (signal?: AbortSignal) =>
+    call<MatchListResponse>('/api/live/matches', {}, signal),
+
   /** Cập nhật tỉ số/đồng hồ, payload nhỏ, gọi lặp lại khi có trận đang đá. */
   live: (league: string, signal?: AbortSignal) =>
     call<LiveResponse>('/api/live', { league }, signal),
