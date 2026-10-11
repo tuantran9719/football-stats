@@ -51,6 +51,19 @@ jobs:
             echo "Khai ở Settings → Secrets and variables → Actions → New repository secret"
             exit 1
           fi
+
+          # Cắt sạch khoảng trắng rồi dùng bản đã cắt ở các bước sau.
+          #
+          # Dán giá trị vào ô của GitHub rất dễ kèm theo một ký tự xuống
+          # dòng ở cuối mà mắt không thấy. Với đường dẫn thì hậu quả rất
+          # khó đoán: rsync gửi sang máy chủ một lệnh bị tách làm hai
+          # dòng, và bash báo "line 2: /web/: No such file or directory"
+          # — chẳng gợi ý gì về việc biến có xuống dòng thừa.
+          {
+            printf 'TARGET=%s\n' "$(printf '%s' "$DEPLOY_TARGET" | tr -d '[:space:]')"
+            printf 'DIR=%s\n'    "$(printf '%s' "$DEPLOY_DIR" | tr -d '[:space:]')"
+            printf 'HEALTH=%s\n' "$(printf '%s' "$DEPLOY_HEALTH_URL" | tr -d '[:space:]')"
+          } >> "$GITHUB_ENV"
           echo "đủ 5 biến"
 
       - uses: actions/checkout@v4
@@ -104,9 +117,6 @@ jobs:
           chmod 644 ~/.ssh/known_hosts
 
       - name: Đồng bộ lên máy chủ
-        env:
-          TARGET: ${{ secrets.DEPLOY_TARGET }}
-          DIR: ${{ secrets.DEPLOY_DIR }}
         run: |
           ssh "$TARGET" "mkdir -p $DIR"
           # --delete cho thư mục web để file của bản cũ không nằm lại.
@@ -119,14 +129,9 @@ jobs:
           rsync -az docker-compose.yml "$TARGET:$DIR/"
 
       - name: Dựng lại container
-        env:
-          TARGET: ${{ secrets.DEPLOY_TARGET }}
-          DIR: ${{ secrets.DEPLOY_DIR }}
         run: ssh "$TARGET" "cd $DIR && docker compose up -d --build"
 
       - name: Kiểm tra máy chủ đã sống lại
-        env:
-          HEALTH: ${{ secrets.DEPLOY_HEALTH_URL }}
         # Không có bước này thì deploy hỏng vẫn báo xanh, và chỉ người
         # dùng mới phát hiện ra.
         run: |
