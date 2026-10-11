@@ -1,0 +1,102 @@
+# Đẩy phiên bản mới lên VPS mỗi khi có mã vào nhánh main.
+#
+# Bản web được build Ở ĐÂY chứ không trên máy chủ: Metro cần 1–1,5 GB
+# RAM lúc đóng gói, VPS 1 nhân 3,8 GB đang chạy sẵn hai container rất
+# dễ bị nhân hệ điều hành giết giữa chừng. Máy chạy CI thì thừa sức, và
+# dùng xong là bỏ.
+#
+# Máy chủ vì vậy chỉ cần Python và Caddy — không Node, không node_modules
+# 354 MB, ít thứ hỏng hơn hẳn.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Cho phép bấm chạy tay, dùng khi cần đẩy lại mà không sửa mã.
+  workflow_dispatch:
+
+concurrency:
+  # Đẩy hai lần liên tiếp thì bỏ lượt cũ, chỉ chạy lượt mới nhất —
+  # tránh hai lần deploy giẫm lên nhau giữa chừng.
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Cài phụ thuộc
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build bản web
+        working-directory: frontend
+        # same-origin: bundle KHÔNG nhúng địa chỉ máy chủ nào. Caddy phục
+        # vụ web và chuyển tiếp /api trên cùng tên miền, nên đổi tên miền
+        # về sau không phải build lại.
+        env:
+          EXPO_PUBLIC_API_BASE: same-origin
+        run: npx expo export --platform web --output-dir ../web --clear
+
+      - name: Chuẩn bị SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Ghim khoá máy chủ thay vì chấp nhận bừa: không có dòng này
+          # thì một kẻ chen giữa có thể nhận là máy chủ và lấy trọn mã
+          # nguồn cùng quyền đăng nhập.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Đồng bộ lên máy chủ
+        env:
+          TARGET: ${{ secrets.DEPLOY_TARGET }}
+          DIR: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          ssh "$TARGET" "mkdir -p $DIR"
+          # --delete cho thư mục web để file của bản cũ không nằm lại.
+          rsync -az --delete web/ "$TARGET:$DIR/web/"
+          rsync -az --delete \
+            --exclude '.venv' --exclude '__pycache__' \
+            --exclude 'data' --exclude '.env' \
+            backend/ "$TARGET:$DIR/backend/"
+          rsync -az deploy/ "$TARGET:$DIR/deploy/"
+          rsync -az docker-compose.yml "$TARGET:$DIR/"
+
+      - name: Dựng lại container
+        env:
+          TARGET: ${{ secrets.DEPLOY_TARGET }}
+          DIR: ${{ secrets.DEPLOY_DIR }}
+        run: ssh "$TARGET" "cd $DIR && docker compose up -d --build"
+
+      - name: Kiểm tra máy chủ đã sống lại
+        env:
+          HEALTH: ${{ secrets.DEPLOY_HEALTH_URL }}
+        # Không có bước này thì deploy hỏng vẫn báo xanh, và chỉ người
+        # dùng mới phát hiện ra.
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$HEALTH" || true)
+            if [ "$code" = "200" ]; then
+              echo "máy chủ trả 200 sau $i lần thử"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "máy chủ không trả 200 sau 150 giây — deploy coi như hỏng"
+          exit 1
