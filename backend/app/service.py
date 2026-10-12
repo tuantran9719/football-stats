@@ -20,6 +20,7 @@ from .predictor import trainer as predictor_trainer
 from .predictor.model import predict as predictor_predict
 from . import rating as rating_module
 from . import referee_store
+from . import splits_store
 from .cache import TTL_LIVE, TTL_LONG, TTL_MEDIUM, TTL_SHORT, cached, cached_dynamic
 from .models import (
     ChatResponse, ProviderRef, StandingsFormResponse, Team,
@@ -998,26 +999,81 @@ def _h2h_seasons() -> list[str]:
 
 
 async def _load_splits(league: str, matches: list[Match]):
+    """
+    Chỉ số theo hiệp của một loạt trận, giữ nguyên thứ tự đầu vào.
+
+    Trận đã đá xong được đọc thẳng từ kho trên đĩa, không gọi mạng.
+    Đây là chỗ quyết định tốc độ của thẻ "đọc nhanh": mười trận gần nhất
+    của mỗi đội vốn là mười lượt gọi riêng, nay gần như luôn bằng không.
+    Xem splits_store.py để biết vì sao cache trong bộ nhớ không đủ.
+
+    Trận chưa đá hoặc đang đá thì vẫn đi đường cũ — số liệu của chúng
+    còn thay đổi nên không được phép lưu lại.
+    """
+    def league_of(m: Match) -> str:
+        # Giải của CHÍNH trận đó, không phải giải đang xem: danh sách đối
+        # đầu nay gộp nhiều giải nên hai thứ này khác nhau.
+        return m.leagueCode or league
+
+    # Mỗi giải mở kho đúng một lần cho cả mẻ.
+    wanted: dict[str, list[str]] = {}
+    for m in matches:
+        if m.status == "finished":
+            wanted.setdefault(league_of(m), []).append(m.refs[0].externalId)
+
+    stored: dict[str, dict[str, MatchSplitStats]] = {}
+    if wanted:
+        codes = list(wanted)
+        results = await asyncio.gather(
+            *[splits_store.get_many(c, wanted[c]) for c in codes]
+        )
+        stored = dict(zip(codes, results))
+
+    # Trận lấy được từ kho thì khỏi gọi mạng; phần còn lại mới phải chờ.
+    hits: dict[int, MatchSplitStats] = {}
+    todo: list[int] = []
+    for idx, m in enumerate(matches):
+        found = None
+        if m.status == "finished":
+            found = stored.get(league_of(m), {}).get(m.refs[0].externalId)
+        if found is not None:
+            hits[idx] = found
+        else:
+            todo.append(idx)
+
     async def load_one(m: Match):
         ttl = TTL_LONG if m.status == "finished" else TTL_SHORT
         ext_id = m.refs[0].externalId
-        # Dùng giải của CHÍNH trận đó, không phải giải đang xem: danh sách
-        # đối đầu nay gộp nhiều giải nên hai thứ này khác nhau.
-        lg = m.leagueCode or league
+        lg = league_of(m)
 
         async def fetch():
             return await provider.get_match_detail(lg, ext_id)
 
         detail = await cached(f"detail:{lg}:{ext_id}", ttl, fetch)
-        return m, compute_match_split(detail.match, detail.events, detail.stats)
+        return compute_match_split(detail.match, detail.events, detail.stats)
 
     sem = asyncio.Semaphore(4)
 
-    async def guarded(m: Match):
+    async def guarded(idx: int):
         async with sem:
-            return await load_one(m)
+            return idx, await load_one(matches[idx])
 
-    return await asyncio.gather(*[guarded(m) for m in matches])
+    fetched = dict(await asyncio.gather(*[guarded(i) for i in todo])) if todo else {}
+
+    # Ghi lại những trận vừa tải mà đã đá xong. Chỉ ghi khi có cái mới,
+    # và gộp một lượt cho mỗi giải.
+    fresh: dict[str, dict[str, MatchSplitStats]] = {}
+    for idx, split in fetched.items():
+        m = matches[idx]
+        if m.status == "finished":
+            fresh.setdefault(league_of(m), {})[m.refs[0].externalId] = split
+    if fresh:
+        await asyncio.gather(
+            *[splits_store.put_many(c, items) for c, items in fresh.items()]
+        )
+
+    merged = {**hits, **fetched}
+    return [(m, merged[i]) for i, m in enumerate(matches)]
 
 
 def _to_match_row(match: Match, split: MatchSplitStats) -> MatchRow:
